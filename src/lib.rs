@@ -9,7 +9,6 @@ use mongodb::bson::{doc, Document};
 use mongodb::options::{UpdateOptions};
 use chrono::prelude::{DateTime, Utc};
 use std::time::SystemTime;
-
 use once_cell::sync::OnceCell;
 
 static MONGODB: OnceCell<Database> = OnceCell::new();
@@ -29,8 +28,8 @@ async fn connect() {
 
     println!("Connecting to DB!");
 
-    let _url = env::var("EXTENSION_URL").unwrap_or(dotenv!("EXTENSION_URL").to_string());
-    let _db_name = env::var("EXTENSION_DBNAME").unwrap_or(dotenv!("EXTENSION_DBNAME").to_string());
+    let _url = env::var("EXTENSION_URL").unwrap_or_else(|_| dotenv!("EXTENSION_URL").to_string());
+    let _db_name = env::var("EXTENSION_DBNAME").unwrap_or_else(|_| dotenv!("EXTENSION_DBNAME").to_string());
 
     if let Ok(client_options) = ClientOptions::parse(_url).await {
         // client_options.app_name = Some("FPArma Server Extension".to_string());
@@ -56,11 +55,10 @@ async fn write_log(id: &String, log_level: i32, time: f64, message: &String) {
         connect().await;
     }
 
-    let _collection_name = env::var("EXTENSION_COLLECTION").unwrap_or(dotenv!("EXTENSION_COLLECTION").to_string());
-
+    let _collection_name = env::var("EXTENSION_COLLECTION").unwrap_or_else(|_| dotenv!("EXTENSION_COLLECTION").to_string());
     let _db = MONGODB.get().unwrap();
 
-    let _dt: DateTime<Utc> = SystemTime::now().clone().into();
+    let _dt: DateTime<Utc> = SystemTime::now().into();
     let _created_at: String = _dt.format("%FT%H:%M:%S%.3fZ").to_string();
 
     let _options = UpdateOptions::builder().upsert(true).build();
@@ -69,8 +67,8 @@ async fn write_log(id: &String, log_level: i32, time: f64, message: &String) {
     _collection.update_one(
         doc! {"mission_id": id},
         doc! {
-        "$setOnInsert": { "created_at": format!("{}", _created_at) },
-        "$push": doc! {"logs": doc! {"time": time, "level": log_level, "text": message}}
+            "$setOnInsert": doc! { "created_at": format!("{}", _created_at) },
+            "$push": doc! {"logs": doc! {"time": time, "level": log_level, "text": message}}
     }, _options).await.unwrap();
 }
 
