@@ -28,9 +28,10 @@ async fn connect() {
 
     println!("Connecting to DB!");
 
-    let _url = env::var("FP_EXTENSION_MONGO_DB_URL").unwrap_or_else(|_| dotenv!("FP_EXTENSION_MONGO_DB_URL").to_string());
-    let _db_name =
-        env::var("FP_EXTENSION_MONGO_DB_DBNAME").unwrap_or_else(|_| dotenv!("FP_EXTENSION_MONGO_DB_DBNAME").to_string());
+    let _url = env::var("FP_EXTENSION_MONGO_DB_URL")
+        .unwrap_or_else(|_| dotenv!("FP_EXTENSION_MONGO_DB_URL").to_string());
+    let _db_name = env::var("FP_EXTENSION_MONGO_DB_DBNAME")
+        .unwrap_or_else(|_| dotenv!("FP_EXTENSION_MONGO_DB_DBNAME").to_string());
 
     if let Ok(client_options) = ClientOptions::parse(_url).await {
         // client_options.app_name = Some("FPArma Server Extension".to_string());
