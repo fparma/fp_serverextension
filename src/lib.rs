@@ -3,7 +3,9 @@ extern crate dotenv_codegen;
 
 use arma_rs::{arma, Extension};
 use chrono::prelude::{DateTime, Utc};
+use env_logger::{Builder, Target};
 use futures::executor::block_on;
+use log::LevelFilter;
 use mongodb::{
     bson::{doc, Document},
     options::ClientOptions,
@@ -17,16 +19,21 @@ static MONGODB: OnceCell<Database> = OnceCell::new();
 
 #[arma]
 fn init() -> Extension {
+    let mut builder = Builder::from_default_env();
+    builder.target(Target::Stdout);
+    builder.filter_level(LevelFilter::Info);
+    builder.init();
+
     Extension::build().command("log", log).finish()
 }
 
 async fn connect() {
     if MONGODB.get().is_some() {
-        println!("Connection to DB already present!");
+        log::warn!(target: "fp_extension", "Connection to DB already present!");
         return;
     }
 
-    println!("Connecting to DB!");
+    log::info!(target: "fp_extension", "Connecting to DB!");
 
     let _url = env::var("FP_EXTENSION_MONGO_DB_URL")
         .unwrap_or_else(|_| dotenv!("FP_EXTENSION_MONGO_DB_URL").to_string());
@@ -37,7 +44,7 @@ async fn connect() {
         // client_options.app_name = Some("FPArma Server Extension".to_string());
         if let Ok(client) = Client::with_options(client_options) {
             let _ = MONGODB.set(client.database(&_db_name[..]));
-            println!("Connected to DB!");
+            log::info!(target: "fp_extension", "Connected to DB!");
         }
     }
 }
