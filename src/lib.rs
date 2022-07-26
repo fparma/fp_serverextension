@@ -11,9 +11,9 @@ use mongodb::{
     sync::{Client, Database},
 };
 use once_cell::sync::OnceCell;
-use std::{env, thread, time::SystemTime};
+use std::{env, sync::RwLock, thread, time::SystemTime};
 
-static MONGODB: OnceCell<Database> = OnceCell::new();
+static MONGODB: OnceCell<RwLock<Option<Database>>> = OnceCell::new();
 
 #[arma]
 fn init() -> Extension {
@@ -21,26 +21,30 @@ fn init() -> Extension {
     builder.target(Target::Stdout);
     builder.filter_level(LevelFilter::Info);
     builder.init();
-
-    // We connect on another thread to avoid blocking the main thread.
-    thread::spawn(|| {
-        match connect() {
-            Ok(_) => (),
-            Err(_) => log::error!(target: "fp_extension", "Failed to connect to DB on init"),
-        };
-    });
-
+    // We unwrap as the cell should not be initialized
+    MONGODB.set(RwLock::new(None)).unwrap();
     Extension::build().command("log", log).finish()
 }
 
 fn connect() -> Result<(), ()> {
-    match MONGODB.get() {
-        // This should never happen
-        Some(_) => {
+    // We unwrap as the cell should be initialized by now.
+    let lock = MONGODB.get().unwrap();
+
+    {
+        // In this scope we hold shared access to the lock.
+        let read_l = lock.read().unwrap();
+        if read_l.as_ref().is_some() {
             log::warn!(target: "fp_extension", "Connection to DB already present!");
-            Ok(())
+            return Ok(());
         }
-        None => {
+    }
+
+    {
+        // In this scope we hold exclusive access to the lock.
+        let mut write_l = lock.write().unwrap();
+        if write_l.as_mut().is_some() {
+            Ok(())
+        } else {
             log::info!(target: "fp_extension", "Connecting to DB!");
 
             let url = env::var("FP_EXTENSION_MONGO_DB_URL")
@@ -54,7 +58,7 @@ fn connect() -> Result<(), ()> {
                         let db = client.database(&db_name[..]);
                         // We unwrap here as we know the client should be empty as we check just that at the top of the function
                         // Else we had a concurrency issue and we should panic
-                        MONGODB.set(db).unwrap();
+                        write_l.replace(db);
                         log::info!(target: "fp_extension", "Connected to DB!");
                         Ok(())
                     }
@@ -81,34 +85,34 @@ pub fn log(id: String, log_level: i32, time: f64, message: String) -> String {
 }
 
 fn write_log(id: &String, log_level: i32, time: f64, message: &String) {
-    let db = match MONGODB.get() {
-        Some(db) => db,
-        None => {
-            log::error!(target: "fp_extension", "Error writing log: No DB connection!");
-            return;
+    match connect() {
+        Ok(_) => {
+            let db = MONGODB.get().unwrap().read().unwrap();
+            let db = db.as_ref().unwrap();
+            let dt: DateTime<Utc> = SystemTime::now().into();
+            let created_at: String = dt.format("%FT%H:%M:%S%.3fZ").to_string();
+
+            let options = UpdateOptions::builder().upsert(true).build();
+
+            let collection_name = env::var("FP_EXTENSION_MONGO_DB_COLLECTION")
+                .unwrap_or_else(|_| dotenv!("FP_EXTENSION_MONGO_DB_COLLECTION").to_string());
+
+            let collection = db.collection::<Document>(&collection_name[..]);
+
+            match collection.update_one(
+                doc! {"mission_id": id},
+                doc! {
+                        "$setOnInsert": doc! { "created_at": format!("{}", created_at) },
+                        "$push": doc! {"logs": doc! {"time": time, "level": log_level, "text": message}}
+                },options,) {
+            Ok(_) => (),
+            Err(err) => log::error!(target: "fp_extension", "Error writing log: {}", err),
+        }
+        }
+        Err(_) => {
+            log::error!(target: "fp_extension", "Failed to establish DB connection");
         }
     };
-
-    let dt: DateTime<Utc> = SystemTime::now().into();
-    let created_at: String = dt.format("%FT%H:%M:%S%.3fZ").to_string();
-
-    let options = UpdateOptions::builder().upsert(true).build();
-
-    let collection_name = env::var("FP_EXTENSION_MONGO_DB_COLLECTION")
-        .unwrap_or_else(|_| dotenv!("FP_EXTENSION_MONGO_DB_COLLECTION").to_string());
-
-    let collection = db.collection::<Document>(&collection_name[..]);
-
-    collection
-        .update_one(
-            doc! {"mission_id": id},
-            doc! {
-                    "$setOnInsert": doc! { "created_at": format!("{}", created_at) },
-                    "$push": doc! {"logs": doc! {"time": time, "level": log_level, "text": message}}
-            },
-            options,
-        )
-        .unwrap();
 }
 
 #[cfg(test)]
