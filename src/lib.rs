@@ -56,8 +56,6 @@ fn connect() -> Result<(), ()> {
                 Ok(client_options) => match Client::with_options(client_options) {
                     Ok(client) => {
                         let db = client.database(&db_name[..]);
-                        // We unwrap here as we know the client should be empty as we check just that at the top of the function
-                        // Else we had a concurrency issue and we should panic
                         write_l.replace(db);
                         log::info!(target: "fp_extension", "Connected to DB!");
                         Ok(())
