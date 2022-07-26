@@ -3,86 +3,114 @@ extern crate dotenv_codegen;
 
 use arma_rs::{arma, Extension};
 use chrono::prelude::{DateTime, Utc};
-use env_logger::{Builder, Target};
-use futures::executor::block_on;
+use env_logger::Target;
 use log::LevelFilter;
 use mongodb::{
     bson::{doc, Document},
-    options::ClientOptions,
-    options::UpdateOptions,
-    Client, Database,
+    options::{ClientOptions, UpdateOptions},
+    sync::{Client, Database},
 };
 use once_cell::sync::OnceCell;
-use std::{env, thread, time::SystemTime};
+use std::{env, sync::RwLock, thread, time::SystemTime};
 
-static MONGODB: OnceCell<Database> = OnceCell::new();
+static MONGODB: OnceCell<RwLock<Option<Database>>> = OnceCell::new();
 
 #[arma]
 fn init() -> Extension {
-    let mut builder = Builder::from_default_env();
+    let mut builder = env_logger::Builder::from_default_env();
     builder.target(Target::Stdout);
     builder.filter_level(LevelFilter::Info);
     builder.init();
-
+    // We unwrap as the cell should not be initialized
+    MONGODB.set(RwLock::new(None)).unwrap();
     Extension::build().command("log", log).finish()
 }
 
-async fn connect() {
-    if MONGODB.get().is_some() {
-        log::warn!(target: "fp_extension", "Connection to DB already present!");
-        return;
+fn connect() -> Result<(), ()> {
+    // We unwrap as the cell should be initialized by now.
+    let lock = MONGODB.get().unwrap();
+
+    {
+        // In this scope we hold shared access to the lock.
+        let read_l = lock.read().unwrap();
+        if read_l.as_ref().is_some() {
+            log::debug!(target: "fp_extension", "Connection to DB already present!");
+            return Ok(());
+        }
     }
 
-    log::info!(target: "fp_extension", "Connecting to DB!");
+    {
+        // In this scope we hold exclusive access to the lock.
+        let mut write_l = lock.write().unwrap();
+        if write_l.as_mut().is_some() {
+            Ok(())
+        } else {
+            log::info!(target: "fp_extension", "Connecting to DB!");
 
-    let _url = env::var("FP_EXTENSION_MONGO_DB_URL")
-        .unwrap_or_else(|_| dotenv!("FP_EXTENSION_MONGO_DB_URL").to_string());
-    let _db_name = env::var("FP_EXTENSION_MONGO_DB_DBNAME")
-        .unwrap_or_else(|_| dotenv!("FP_EXTENSION_MONGO_DB_DBNAME").to_string());
+            let url = env::var("FP_EXTENSION_MONGO_DB_URL")
+                .unwrap_or_else(|_| dotenv!("FP_EXTENSION_MONGO_DB_URL").to_string());
+            let db_name = env::var("FP_EXTENSION_MONGO_DB_DBNAME")
+                .unwrap_or_else(|_| dotenv!("FP_EXTENSION_MONGO_DB_DBNAME").to_string());
 
-    if let Ok(client_options) = ClientOptions::parse(_url).await {
-        // client_options.app_name = Some("FPArma Server Extension".to_string());
-        if let Ok(client) = Client::with_options(client_options) {
-            let _ = MONGODB.set(client.database(&_db_name[..]));
-            log::info!(target: "fp_extension", "Connected to DB!");
+            match ClientOptions::parse(url) {
+                Ok(client_options) => match Client::with_options(client_options) {
+                    Ok(client) => {
+                        let db = client.database(&db_name);
+                        write_l.replace(db);
+                        log::info!(target: "fp_extension", "Connected to DB!");
+                        Ok(())
+                    }
+                    Err(err) => {
+                        log::warn!(target: "fp_extension", "Error connecting to DB: {}", err);
+                        Err(())
+                    }
+                },
+                Err(err) => {
+                    log::warn!(target: "fp_extension", "Error parsing DB URL: {}", err);
+                    Err(())
+                }
+            }
         }
     }
 }
 
 pub fn log(id: String, log_level: i32, time: f64, message: String) -> String {
-    let _id = String::from(&id);
-    let _message = String::from(&message);
-    thread::spawn(move || block_on(write_log(&_id, log_level, time, &_message)));
+    let _id = id.clone();
+    let _message = message.clone();
+    thread::spawn(move || write_log(&_id, log_level, time, &_message));
 
     format!("{} {} {} {}", id, log_level, time, message)
 }
 
-async fn write_log(id: &String, log_level: i32, time: f64, message: &String) {
-    if MONGODB.get().is_none() {
-        connect().await;
-    }
+fn write_log(id: &str, log_level: i32, time: f64, message: &str) {
+    match connect() {
+        Ok(_) => {
+            let db = MONGODB.get().unwrap().read().unwrap();
+            let db = db.as_ref().unwrap();
+            let dt: DateTime<Utc> = SystemTime::now().into();
+            let created_at: String = dt.format("%FT%H:%M:%S%.3fZ").to_string();
 
-    let _collection_name = env::var("FP_EXTENSION_MONGO_DB_COLLECTION")
-        .unwrap_or_else(|_| dotenv!("FP_EXTENSION_MONGO_DB_COLLECTION").to_string());
-    let _db = MONGODB.get().unwrap();
+            let options = UpdateOptions::builder().upsert(true).build();
 
-    let _dt: DateTime<Utc> = SystemTime::now().into();
-    let _created_at: String = _dt.format("%FT%H:%M:%S%.3fZ").to_string();
+            let collection_name = env::var("FP_EXTENSION_MONGO_DB_COLLECTION")
+                .unwrap_or_else(|_| dotenv!("FP_EXTENSION_MONGO_DB_COLLECTION").to_string());
 
-    let _options = UpdateOptions::builder().upsert(true).build();
-    let _collection = _db.collection::<Document>(&_collection_name[..]);
+            let collection = db.collection::<Document>(&collection_name[..]);
 
-    _collection
-        .update_one(
-            doc! {"mission_id": id},
-            doc! {
-                    "$setOnInsert": doc! { "created_at": format!("{}", _created_at) },
-                    "$push": doc! {"logs": doc! {"time": time, "level": log_level, "text": message}}
-            },
-            _options,
-        )
-        .await
-        .unwrap();
+            match collection.update_one(
+                doc! {"mission_id": id},
+                doc! {
+                        "$setOnInsert": doc! { "created_at": format!("{}", created_at) },
+                        "$push": doc! {"logs": doc! {"time": time, "level": log_level, "text": message}}
+                },options,) {
+            Ok(_) => (),
+            Err(err) => log::warn!(target: "fp_extension", "Error writing log: {}", err),
+        }
+        }
+        Err(_) => {
+            log::warn!(target: "fp_extension", "Failed to establish DB connection");
+        }
+    };
 }
 
 #[cfg(test)]
