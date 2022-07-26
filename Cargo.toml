@@ -23,4 +23,4 @@ env_logger = "0.8.4"
 [dependencies.mongodb]
 version = "2.3.0"
 default-features = false
-features = ["async-std-runtime"]
+features = ["sync"]

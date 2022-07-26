@@ -4,13 +4,12 @@ extern crate dotenv_codegen;
 use arma_rs::{arma, Extension};
 use chrono::prelude::{DateTime, Utc};
 use env_logger::{Builder, Target};
-use futures::executor::block_on;
 use log::LevelFilter;
 use mongodb::{
     bson::{doc, Document},
     options::ClientOptions,
     options::UpdateOptions,
-    Client, Database,
+    sync::{Database, Client}
 };
 use once_cell::sync::OnceCell;
 use std::{env, thread, time::SystemTime};
@@ -27,7 +26,7 @@ fn init() -> Extension {
     Extension::build().command("log", log).finish()
 }
 
-async fn connect() {
+fn connect() {
     if MONGODB.get().is_some() {
         log::warn!(target: "fp_extension", "Connection to DB already present!");
         return;
@@ -40,7 +39,7 @@ async fn connect() {
     let _db_name = env::var("FP_EXTENSION_MONGO_DB_DBNAME")
         .unwrap_or_else(|_| dotenv!("FP_EXTENSION_MONGO_DB_DBNAME").to_string());
 
-    if let Ok(client_options) = ClientOptions::parse(_url).await {
+    if let Ok(client_options) = ClientOptions::parse(_url) {
         // client_options.app_name = Some("FPArma Server Extension".to_string());
         if let Ok(client) = Client::with_options(client_options) {
             let _ = MONGODB.set(client.database(&_db_name[..]));
@@ -50,16 +49,16 @@ async fn connect() {
 }
 
 pub fn log(id: String, log_level: i32, time: f64, message: String) -> String {
-    let _id = String::from(&id);
-    let _message = String::from(&message);
-    thread::spawn(move || block_on(write_log(&_id, log_level, time, &_message)));
+    let _id = id.clone();
+    let _message = message.clone();
+    thread::spawn(move || write_log(&_id, log_level, time, &_message));
 
     format!("{} {} {} {}", id, log_level, time, message)
 }
 
-async fn write_log(id: &String, log_level: i32, time: f64, message: &String) {
+fn write_log(id: &String, log_level: i32, time: f64, message: &String) {
     if MONGODB.get().is_none() {
-        connect().await;
+        connect();
     }
 
     let _collection_name = env::var("FP_EXTENSION_MONGO_DB_COLLECTION")
@@ -81,7 +80,6 @@ async fn write_log(id: &String, log_level: i32, time: f64, message: &String) {
             },
             _options,
         )
-        .await
         .unwrap();
 }
 
