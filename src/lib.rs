@@ -22,10 +22,13 @@ fn init() -> Extension {
     builder.filter_level(LevelFilter::Info);
     builder.init();
 
-    match connect() {
-        Ok(_) => (),
-        Err(_) => log::error!(target: "fp_extension", "Failed to connect to DB on init"),
-    };
+    // We connect on another thread to avoid blocking the main thread.
+    thread::spawn(|| {
+        match connect() {
+            Ok(_) => (),
+            Err(_) => log::error!(target: "fp_extension", "Failed to connect to DB on init"),
+        };
+    });
 
     Extension::build().command("log", log).finish()
 }
