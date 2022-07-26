@@ -82,7 +82,7 @@ pub fn log(id: String, log_level: i32, time: f64, message: String) -> String {
     format!("{} {} {} {}", id, log_level, time, message)
 }
 
-fn write_log(id: &String, log_level: i32, time: f64, message: &String) {
+fn write_log(id: &str, log_level: i32, time: f64, message: &str) {
     match connect() {
         Ok(_) => {
             let db = MONGODB.get().unwrap().read().unwrap();
