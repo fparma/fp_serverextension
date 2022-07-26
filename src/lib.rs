@@ -34,7 +34,7 @@ fn connect() -> Result<(), ()> {
         // In this scope we hold shared access to the lock.
         let read_l = lock.read().unwrap();
         if read_l.as_ref().is_some() {
-            log::warn!(target: "fp_extension", "Connection to DB already present!");
+            log::debug!(target: "fp_extension", "Connection to DB already present!");
             return Ok(());
         }
     }
@@ -55,18 +55,18 @@ fn connect() -> Result<(), ()> {
             match ClientOptions::parse(url) {
                 Ok(client_options) => match Client::with_options(client_options) {
                     Ok(client) => {
-                        let db = client.database(&db_name[..]);
+                        let db = client.database(&db_name);
                         write_l.replace(db);
                         log::info!(target: "fp_extension", "Connected to DB!");
                         Ok(())
                     }
                     Err(err) => {
-                        log::error!(target: "fp_extension", "Error connecting to DB: {}", err);
+                        log::warn!(target: "fp_extension", "Error connecting to DB: {}", err);
                         Err(())
                     }
                 },
                 Err(err) => {
-                    log::error!(target: "fp_extension", "Error parsing DB URL: {}", err);
+                    log::warn!(target: "fp_extension", "Error parsing DB URL: {}", err);
                     Err(())
                 }
             }
@@ -104,11 +104,11 @@ fn write_log(id: &String, log_level: i32, time: f64, message: &String) {
                         "$push": doc! {"logs": doc! {"time": time, "level": log_level, "text": message}}
                 },options,) {
             Ok(_) => (),
-            Err(err) => log::error!(target: "fp_extension", "Error writing log: {}", err),
+            Err(err) => log::warn!(target: "fp_extension", "Error writing log: {}", err),
         }
         }
         Err(_) => {
-            log::error!(target: "fp_extension", "Failed to establish DB connection");
+            log::warn!(target: "fp_extension", "Failed to establish DB connection");
         }
     };
 }
