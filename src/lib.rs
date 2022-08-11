@@ -10,10 +10,9 @@ use mongodb::{
     options::{ClientOptions, UpdateOptions},
     sync::{Client, Database},
 };
-use once_cell::sync::OnceCell;
 use std::{env, sync::RwLock, thread, time::SystemTime};
 
-static MONGODB: OnceCell<RwLock<Option<Database>>> = OnceCell::new();
+static MONGODB: RwLock<Option<Database>> = RwLock::new(None);
 
 #[arma]
 fn init() -> Extension {
@@ -21,18 +20,13 @@ fn init() -> Extension {
     builder.target(Target::Stdout);
     builder.filter_level(LevelFilter::Info);
     builder.init();
-    // We unwrap as the cell should not be initialized
-    MONGODB.set(RwLock::new(None)).unwrap();
     Extension::build().command("log", log).finish()
 }
 
 fn connect() -> Result<(), ()> {
-    // We unwrap as the cell should be initialized by now.
-    let lock = MONGODB.get().unwrap();
-
     {
         // In this scope we hold shared access to the lock.
-        let read_l = lock.read().unwrap();
+        let read_l = MONGODB.read().unwrap();
         if read_l.as_ref().is_some() {
             log::debug!(target: "fp_extension", "Connection to DB already present!");
             return Ok(());
@@ -41,7 +35,7 @@ fn connect() -> Result<(), ()> {
 
     {
         // In this scope we hold exclusive access to the lock.
-        let mut write_l = lock.write().unwrap();
+        let mut write_l = MONGODB.write().unwrap();
         if write_l.as_mut().is_some() {
             Ok(())
         } else {
@@ -85,7 +79,7 @@ pub fn log(id: String, log_level: i32, time: f64, message: String) -> String {
 fn write_log(id: &str, log_level: i32, time: f64, message: &str) {
     match connect() {
         Ok(_) => {
-            let db = MONGODB.get().unwrap().read().unwrap();
+            let db = MONGODB.read().unwrap();
             let db = db.as_ref().unwrap();
             let dt: DateTime<Utc> = SystemTime::now().into();
             let created_at: String = dt.format("%FT%H:%M:%S%.3fZ").to_string();
